@@ -131,10 +131,9 @@ checkpoints/
 *.h5
 *.hdf5
 
-# Generated data files (if large or regeneratable)
-# Uncomment if corpus files are too large or can be regenerated:
-# data/corpus.json
-# data/test_corpus.json
+# Generated data files (large datasets - can be regenerated)
+data/*.json
+!data/__init__.py
 
 # IDE
 .vscode/

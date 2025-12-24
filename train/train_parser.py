@@ -6,8 +6,9 @@ Trains the neural instruction parser to 90%+ accuracy using canonical corpus.
 
 import numpy as np
 import sys
+import json
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -65,13 +66,39 @@ def generate_canonical_dataset(n_examples: int = 5000, seed: int = 42) -> List[T
     return dataset
 
 
+def load_multi_turn_corpus(corpus_path: str) -> List[Tuple[str, int, Dict]]:
+    """
+    Load multi-turn conversation corpus and extract instruction-action pairs.
+    
+    Args:
+        corpus_path: Path to multi-turn JSON corpus
+        
+    Returns:
+        List of (instruction, u_type, args) tuples
+    """
+    with open(corpus_path, 'r') as f:
+        conversations = json.load(f)
+    
+    dataset = []
+    
+    for conv in conversations:
+        for turn in conv.get("turns", []):
+            instruction = turn["instruction"]
+            u_type = turn["u_type"]
+            args = turn["args"]
+            dataset.append((instruction, u_type, args))
+    
+    return dataset
+
+
 def train_parser_to_target_accuracy(
     target_accuracy: float = 0.90,
     max_epochs: int = 100,
     lr: float = 0.05,
     n_train: int = 5000,
     n_val: int = 500,
-    seed: int = 42
+    seed: int = 42,
+    corpus: Optional[str] = None
 ) -> InstructionParser:
     """
     Train instruction parser until target accuracy is reached.
@@ -105,25 +132,61 @@ def train_parser_to_target_accuracy(
         seed=seed
     )
     
-    # Generate datasets
-    print("Generating canonical training data...")
-    train_data = generate_canonical_dataset(n_train, seed)
-    val_data = generate_canonical_dataset(n_val, seed + 1000)
+    # Load or generate datasets
+    if corpus:
+        print(f"Loading multi-turn corpus from {corpus}...")
+        all_data = load_multi_turn_corpus(corpus)
+        # Split into train/val
+        rng = np.random.default_rng(seed)
+        indices = rng.permutation(len(all_data))
+        n_train_actual = min(n_train, len(all_data) - n_val)
+        train_indices = indices[:n_train_actual]
+        val_indices = indices[n_train_actual:n_train_actual + n_val]
+        train_data = [all_data[i] for i in train_indices]
+        val_data = [all_data[i] for i in val_indices]
+        print(f"Loaded {len(all_data)} examples from corpus")
+    else:
+        print("Generating canonical training data...")
+        train_data = generate_canonical_dataset(n_train, seed)
+        val_data = generate_canonical_dataset(n_val, seed + 1000)
     
     print(f"Train: {len(train_data)}, Val: {len(val_data)}")
+    
+    # Group training data by u_type for per-type training
+    from collections import defaultdict
+    train_by_type = defaultdict(list)
+    for instruction, u_type, args in train_data:
+        train_by_type[u_type].append((instruction, u_type, args))
+    
+    print(f"Training with {len(train_by_type)} instruction types")
+    print(f"Type distribution: {dict((k, len(v)) for k, v in sorted(train_by_type.items()))}")
     print()
     
     # Training loop
-    print("Training...")
+    print("Training (per-type batches)...")
     print("-" * 60)
     
     best_accuracy = 0.0
-    patience = 10
+    patience = 20  # Increased patience for per-type training
     patience_counter = 0
     
     for epoch in range(max_epochs):
-        # Train epoch
-        metrics = parser.train_epoch(train_data, lr=lr, shuffle=True)
+        # Per-type training: train one u_type at a time
+        total_type_loss = 0.0
+        n_types_trained = 0
+        
+        # Train on each type separately
+        for u_type in sorted(train_by_type.keys()):
+            type_data = train_by_type[u_type]
+            if len(type_data) > 0:
+                # Train on this type's examples
+                type_metrics = parser.train_epoch(type_data, lr=lr, shuffle=True)
+                total_type_loss += type_metrics.get('type_loss', 0.0)
+                n_types_trained += 1
+        
+        # Average loss across types
+        avg_loss = total_type_loss / n_types_trained if n_types_trained > 0 else 0.0
+        metrics = {'type_loss': avg_loss}
         
         # Evaluate on validation
         n_correct_type = 0
@@ -150,11 +213,34 @@ def train_parser_to_target_accuracy(
         
         # Print progress
         if epoch % 5 == 0 or val_type_acc >= target_accuracy:
+            # Calculate per-type accuracies for diagnostics
+            type_accuracies = {}
+            val_by_type = defaultdict(list)
+            for instruction, target_type, target_args in val_data:
+                val_by_type[target_type].append((instruction, target_type, target_args))
+            
+            for u_type, examples in val_by_type.items():
+                n_correct = 0
+                for instruction, target_type, target_args in examples:
+                    u_type_pred, args, _ = parser.parse(instruction, prefer_pattern=False)
+                    if u_type_pred == target_type:
+                        n_correct += 1
+                if len(examples) > 0:
+                    type_accuracies[u_type] = n_correct / len(examples)
+            
+            # Print main metrics
             print(f"Epoch {epoch:3d} | "
                   f"Type: {val_type_acc*100:5.1f}% | "
                   f"Arg-i: {val_i_acc*100:5.1f}% | "
                   f"Full: {val_full_acc*100:5.1f}% | "
                   f"Loss: {metrics['type_loss']:.4f}")
+            
+            # Print top/bottom performing types (every 10 epochs)
+            if epoch % 10 == 0 and type_accuracies:
+                from agent.modules.instruction_parser import InstructionParser
+                sorted_types = sorted(type_accuracies.items(), key=lambda x: x[1], reverse=True)
+                print(f"  Top types: {[(InstructionParser.INT_NAMES[t] if t < len(InstructionParser.INT_NAMES) else f'Type{t}', f'{acc*100:.1f}%') for t, acc in sorted_types[:3]]}")
+                print(f"  Bottom types: {[(InstructionParser.INT_NAMES[t] if t < len(InstructionParser.INT_NAMES) else f'Type{t}', f'{acc*100:.1f}%') for t, acc in sorted_types[-3:]]}")
         
         # Check target
         if val_type_acc >= target_accuracy:
@@ -244,8 +330,10 @@ def main():
     parser.add_argument("--target", type=float, default=0.90, help="Target accuracy")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.05)
-    parser.add_argument("--n_train", type=int, default=5000)
+    parser.add_argument("--n_train", type=int, default=5000, help="Number of training examples")
+    parser.add_argument("--n_val", type=int, default=500, help="Number of validation examples")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--corpus", type=str, default=None, help="Path to multi-turn corpus JSON")
     args = parser.parse_args()
     
     # Train parser
@@ -254,7 +342,9 @@ def main():
         max_epochs=args.epochs,
         lr=args.lr,
         n_train=args.n_train,
-        seed=args.seed
+        n_val=args.n_val,
+        seed=args.seed,
+        corpus=args.corpus
     )
     
     # Evaluate

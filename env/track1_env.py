@@ -283,6 +283,31 @@ class Track1CausalEnv:
         one_hot[u_type] = 1.0
         return one_hot
     
+    def simulate_step(self, u_type: int, args: Dict[str, int]) -> Dict[str, np.ndarray]:
+        """
+        Non-destructive forward simulation.
+        Creates a deep copy of the environment and returns the predicted observation.
+        
+        Args:
+            u_type: Intervention type index (0-7)
+            args: Out-of-band arguments dict
+            
+        Returns:
+            Predicted observation dictionary
+        """
+        from copy import deepcopy
+        
+        if self.X is None or self.Rel is None:
+            raise ValueError("Environment not initialized. Call reset() first.")
+        
+        # Create deep copy of environment
+        env_copy = deepcopy(self)
+        
+        # Execute step on copy
+        obs_pred, _, _ = env_copy.step(u_type, args)
+        
+        return obs_pred
+    
     @property
     def obs_shape(self) -> Dict[str, tuple]:
         """Return observation shapes."""

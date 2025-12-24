@@ -20,12 +20,21 @@ class InstructionParser:
     2. Neural classification (learned, flexible)
     """
     
-    # Intervention type names
+    # Intervention type names (0-7: environment actions, 8-16: meta-instructions)
     INT_NAMES = [
+        # Environment actions (0-7)
         "IncreaseAttr", "DecreaseAttr", "SetAttrToward",
         "ToggleRel", "SetRelOn", "SetRelOff",
-        "SwapObjects", "NoiseBurstAttr"
+        "SwapObjects", "NoiseBurstAttr",
+        # Meta-instructions (8-16)
+        "QueryState", "QueryWhy", "Counterfactual",
+        "PlanConnectAll", "PlanGrowMax", "PlanClearAll",
+        "UndoLast", "ResetWorld", "ConditionalIf",
+        "MetaEnergy", "MetaBeliefs", "MetaSummary"
     ]
+    
+    # Extended action space size
+    N_ACTION_TYPES = 20  # 8 environment + 12 meta-instructions
     
     # Keyword patterns for each intervention type
     # Canonical patterns first (match exact corpus format), then variations
@@ -79,6 +88,73 @@ class InstructionParser:
             r"noise\s+object\s+(\d+)",
             r"perturb\s+(?:object\s+)?(\d+)",
         ],
+        # Meta-instructions (8-19)
+        8: [  # QueryState
+            r"what\s+is\s+object\s+(\d+)",
+            r"describe\s+object\s+(\d+)",
+            r"what\s+is\s+the\s+state\s+of\s+object\s+(\d+)",
+            r"describe\s+the\s+world",
+            r"current\s+status",
+            r"show\s+current\s+state",
+            r"what\s+are\s+the\s+connections",
+            r"how\s+many\s+objects\s+are\s+connected",
+        ],
+        9: [  # QueryWhy
+            r"why\s+did\s+object\s+(\d+)\s+change",
+            r"what\s+caused\s+object\s+(\d+)\s+to\s+change",
+            r"explain\s+why\s+object\s+(\d+)\s+changed",
+            r"why\s+did\s+the\s+energy\s+(?:increase|decrease|change)",
+            r"what\s+caused\s+the\s+alignment",
+            r"explain\s+the\s+energy\s+change",
+        ],
+        10: [  # Counterfactual
+            r"what\s+if\s+I\s+swapped\s+object\s+(\d+)\s+and\s+object\s+(\d+)",
+            r"what\s+would\s+happen\s+if\s+I\s+connected\s+object\s+(\d+)",
+            r"predict\s+what\s+happens\s+if\s+I\s+increase\s+object\s+(\d+)",
+            r"what\s+if\s+I\s+had\s+swapped\s+them\s+first",
+            r"imagine\s+I\s+connect\s+object\s+(\d+)\s+to\s+object\s+(\d+)",
+            r"hypothetically,\s+what\s+if\s+I\s+decrease\s+object\s+(\d+)",
+        ],
+        11: [  # PlanConnectAll
+            r"connect\s+all\s+objects",
+            r"link\s+everything",
+        ],
+        12: [  # PlanGrowMax
+            r"grow\s+the\s+largest\s+object",
+            r"make\s+object\s+(\d+)\s+the\s+largest",
+            r"maximize\s+object\s+(\d+)",
+        ],
+        13: [  # PlanClearAll
+            r"clear\s+all\s+relations",
+            r"disconnect\s+everything",
+        ],
+        14: [  # UndoLast
+            r"undo\s+last\s+action",
+            r"go\s+back",
+            r"revert",
+        ],
+        15: [  # ResetWorld
+            r"reset",
+            r"start\s+over",
+        ],
+        16: [  # ConditionalIf
+            r"if\s+object\s+(\d+)\s+is\s+large,\s+connect\s+it\s+to\s+object\s+(\d+)",
+            r"only\s+if\s+object\s+(\d+)\s+is\s+connected,\s+increase\s+it",
+            r"when\s+object\s+(\d+)\s+is\s+high,\s+swap\s+it",
+        ],
+        17: [  # MetaEnergy
+            r"what\s+is\s+the\s+energy",
+            r"energy\s+status",
+        ],
+        18: [  # MetaBeliefs
+            r"what\s+do\s+you\s+know",
+            r"what\s+are\s+your\s+beliefs",
+        ],
+        19: [  # MetaSummary
+            r"describe\s+your\s+understanding",
+            r"what\s+have\s+you\s+learned",
+            r"summarize\s+the\s+changes",
+        ],
     }
     
     def __init__(
@@ -115,10 +191,10 @@ class InstructionParser:
                 seed=seed
             )
             
-            # Intervention type classifier
-            scale = np.sqrt(2.0 / (latent_dim + 8))
-            self.W_type = self.rng.normal(0, scale, (latent_dim, 8)).astype(np.float32)
-            self.b_type = np.zeros(8, dtype=np.float32)
+            # Intervention type classifier (extended to 20 types)
+            scale = np.sqrt(2.0 / (latent_dim + self.N_ACTION_TYPES))
+            self.W_type = self.rng.normal(0, scale, (latent_dim, self.N_ACTION_TYPES)).astype(np.float32)
+            self.b_type = np.zeros(self.N_ACTION_TYPES, dtype=np.float32)
             
             # Argument extractors (per argument type)
             self.W_obj_i = self.rng.normal(0, scale, (latent_dim, n_objects)).astype(np.float32)
@@ -184,8 +260,43 @@ class InstructionParser:
         elif u_type == 7:  # NoiseBurstAttr
             args["i"] = int(groups[0]) if groups[0] else 0
         
-        # Validate and clamp
-        args = self._validate_args(u_type, args)
+        # Meta-instructions (8-19)
+        elif u_type == 8:  # QueryState
+            args["i"] = int(groups[0]) if groups and groups[0] else 0
+            
+        elif u_type == 9:  # QueryWhy
+            args["i"] = int(groups[0]) if groups and groups[0] else 0
+            
+        elif u_type == 10:  # Counterfactual
+            if groups and len(groups) >= 2:
+                args["i"] = int(groups[0]) if groups[0] else 0
+                args["j"] = int(groups[1]) if groups[1] else 1
+            elif groups:
+                args["i"] = int(groups[0]) if groups[0] else 0
+            
+        elif u_type in [11, 12, 13]:  # Planning types
+            # May have object references
+            if groups and groups[0]:
+                args["i"] = int(groups[0])
+            
+        elif u_type in [14, 15]:  # Recovery types
+            # No arguments needed
+            pass
+            
+        elif u_type == 16:  # ConditionalIf
+            if groups and len(groups) >= 2:
+                args["i"] = int(groups[0]) if groups[0] else 0
+                args["j"] = int(groups[1]) if groups[1] else 1
+            elif groups:
+                args["i"] = int(groups[0]) if groups[0] else 0
+            
+        elif u_type in [17, 18, 19]:  # Meta types
+            # No arguments needed
+            pass
+        
+        # Validate and clamp (only for environment actions 0-7)
+        if u_type < 8:
+            args = self._validate_args(u_type, args)
         
         return args
     
@@ -271,7 +382,7 @@ class InstructionParser:
             return u_type, args, confidence
         
         # Fallback: random
-        u_type = int(self.rng.integers(0, 8))
+        u_type = int(self.rng.integers(0, self.N_ACTION_TYPES))
         args = {"i": 0, "j": 1, "a": 0, "r": 0, "bin_id": 0}
         return u_type, args, 0.0
     
