@@ -1,0 +1,13 @@
+# Track 1 (v0.1-A) Dependencies
+# Non-transformer cognitive system
+
+# Core scientific computing
+numpy>=1.21.0
+
+# Configuration
+pyyaml>=6.0
+
+# Optional: for enhanced features
+# scipy>=1.7.0  # For advanced optimization (not required for v0.1)
+# matplotlib>=3.5.0  # For visualization
+

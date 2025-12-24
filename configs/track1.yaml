@@ -1,0 +1,116 @@
+# Track 1 (v0.1-A) Configuration
+# Non-transformer cognitive system with energy-based settling
+
+environment:
+  n_objects: 4          # Number of objects [3-5]
+  n_attributes: 3       # Attributes per object (A)
+  n_relations: 2        # Binary relation types (R)
+  n_bins: 4             # Bins for SetAttrToward
+  bin_centers: [0.125, 0.375, 0.625, 0.875]
+  
+  # Softness parameters
+  delta_attr: 0.05      # Step size for IncreaseAttr/DecreaseAttr
+  noise_attr: 0.01      # Natural noise per step
+  noise_burst_std: 0.08 # NoiseBurstAttr standard deviation
+  
+  # Episode settings
+  min_steps: 15
+  max_steps: 25
+  
+  # Causal consequences (optional)
+  enable_relation_effects: true
+  relation_alignment_strength: 0.02  # How much linked objects align
+
+agent:
+  latent_dim: 64        # dS - latent state dimension
+  intent_dim: 16        # dI - intent vector dimension
+  n_anchors: 8          # M - number of memory anchors
+  n_intervention_types: 8  # K - one-hot intervention types
+  
+  # STC settings
+  stc_factors_per_type: 4   # L_k - factors per intervention type
+  stc_subset_size: 8        # Dimensions per factor
+  
+  # Encoder settings
+  encoder_hidden: 128
+  
+  # Gates
+  gate_hidden: 32
+
+settling:
+  n_steps: 20           # Settling iterations
+  learning_rate: 0.1    # Step size for S update
+  tolerance: 0.0001     # Convergence threshold
+  
+  # Energy weights
+  w_obs: 1.0            # Observation consistency
+  w_anchor: 0.5         # Anchor attraction
+  w_state_stc: 0.1      # State constraints
+  w_intent: 0.05        # Intent bias
+
+learning:
+  # EP-style parameters
+  nudge_strength: 0.5   # beta in nudged phase
+  
+  # Optimizer
+  lr_encoder: 0.001
+  lr_anchors: 0.001
+  lr_stc: 0.0005
+  lr_gates: 0.0005
+  lr_temporal: 0.0005
+  lr_intent: 0.0001
+  
+  # Staged plasticity
+  stage1_steps: 2000    # Anchors + encoder only
+  stage2_steps: 5000    # + STCs
+  stage3_steps: 8000    # + Gates + Temporal
+  # Stage 4: all including Intent
+  
+  # Training
+  batch_size: 1         # Online learning
+  total_steps: 10000
+  log_interval: 100
+  eval_interval: 500
+
+evaluation:
+  # Paraphrase stability
+  n_paraphrase_samples: 5
+  noise_levels: [0.0, 0.05, 0.1, 0.2, 0.3]
+  
+  # Counterfactual coherence
+  change_threshold: 0.1  # Dim change threshold
+  
+  # Logging
+  log_energy_components: true
+  log_gradient_norms: true
+  log_gate_values: true
+  log_anchor_activations: true
+  log_stc_violations: true
+
+seed: 42
+device: cpu
+
+# Language Extension Settings
+language:
+  enabled: true
+  lang_dim: 64              # Language embedding dimension
+  lang_hidden: 128          # Language hidden dimension
+  lang_max_len: 32          # Maximum sequence length
+  
+  # Feature flags
+  use_language_perception: true
+  use_language_generation: true
+  use_instruction_parsing: true
+  
+  # Generation settings
+  generation_temperature: 1.0
+  generation_greedy: true
+  
+  # Training
+  lr_lang_encoder: 0.001
+  lr_lang_decoder: 0.001
+  lr_instruction_parser: 0.001
+  
+  # Corpus
+  corpus_size: 10000
+
